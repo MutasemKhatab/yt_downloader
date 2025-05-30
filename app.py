@@ -119,7 +119,14 @@ def handle_download(data):
     if not url or not format_id:
         socketio.emit('error', {'message': 'Missing URL or format_id'})
         return
-
+        
+    # Set the download path to Termux's Downloads directory
+    import os
+    download_path = os.path.expanduser("~/storage/downloads")
+    
+    # Create the directory if it doesn't exist
+    os.makedirs(download_path, exist_ok=True)
+    
     def progress_hook(d):
         # Process and enhance the progress data for better display
         status = d.get('status', '')
@@ -174,7 +181,7 @@ def handle_download(data):
     ydl_opts = {
         'format': format_id,
         'progress_hooks': [progress_hook],
-        'outtmpl': '%(title)s.%(ext)s',
+        'outtmpl': os.path.join(download_path, '%(title)s.%(ext)s'),
         'postprocessors': [
             {'key': 'FFmpegVideoConvertor', 'preferedformat': 'mp4'},  # Convert to MP4 if not already
             {'key': 'FFmpegFixupM4a'},  # Fix any audio issues
@@ -189,13 +196,13 @@ def handle_download(data):
         with YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
         print("Download and processing complete!")
-        # Send the final 100% complete message
+        # Send the final 100% complete message with download location
         socketio.emit('progress', {
             'status': 'complete',
             'percent': 100.0,
-            'message': 'Download and processing complete!'
+            'message': f'Download complete! File saved in {download_path}'
         })
-        socketio.emit('done', {'status': 'complete'})
+        socketio.emit('done', {'status': 'complete', 'download_path': download_path})
     except Exception as e:
         print(f"Error during download: {str(e)}")
         socketio.emit('error', {'message': str(e)})
