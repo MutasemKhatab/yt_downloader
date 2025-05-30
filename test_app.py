@@ -28,7 +28,7 @@ def disconnect():
 def main():
     sio.connect('http://127.0.0.1:5000')
     url = 'https://www.youtube.com/watch?v=TEZdqFXlVh0'  # replace with your video URL
-    format_id = '18'  # replace with desired format_id from /info endpoint
+    format_id = '18+75'  # replace with desired format_id from /info endpoint
     print("Starting download...")
     sio.emit('start_download', {'url': url, 'format_id': format_id})
     # Keep script running to listen for events

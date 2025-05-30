@@ -8,7 +8,7 @@ void main() {
   runApp(const MyApp());
 }
 
-const backendHttpUrl = 'http://0.0.0.0:5000';
+const backendHttpUrl = 'http://192.168.0.129:5000';
 const backendWsUrl = 'ws://192.168.0.129:5000';
 
 class MyApp extends StatelessWidget {
@@ -40,6 +40,7 @@ class _HomePageState extends State<HomePage> {
   List<dynamic> _formats = [];
 
   String? _selectedFormatId;
+  double? _progressPercent;
 
   WebSocketChannel? _channel;
   String _progressText = '';
@@ -54,6 +55,7 @@ class _HomePageState extends State<HomePage> {
       _formats = [];
       _selectedFormatId = null;
       _progressText = '';
+      _progressPercent = null;
     });
 
     try {
@@ -66,11 +68,35 @@ class _HomePageState extends State<HomePage> {
       if (res.statusCode == 200) {
         final json = jsonDecode(res.body);
         final formats = (json['formats'] as List<dynamic>);
+
+        // Apply a more sophisticated sorting:
+        // 1. First by combined status (combined formats first)
+        // 2. Then by resolution (highest first)
+        // 3. Then by format note (to group High Quality formats)
+        // 4. Then by filesize (smaller first for same resolution)
         formats.sort((a, b) {
-          // Sort descending by resolution width, then filesize (smaller first)
+          // Check for the '+' character in format_id which indicates separate streams that will be merged
+          bool aIsCombined = !a['format_id'].toString().contains('+');
+          bool bIsCombined = !b['format_id'].toString().contains('+');
+
+          // Sort combined formats first
+          if (aIsCombined != bIsCombined) {
+            return aIsCombined ? -1 : 1;
+          }
+
+          // Then sort by resolution
           int aRes = _parseResolution(a['resolution']);
           int bRes = _parseResolution(b['resolution']);
           if (aRes != bRes) return bRes.compareTo(aRes);
+
+          // Then by format note (to group "High Quality" formats)
+          String aNote = a['format_note']?.toString() ?? '';
+          String bNote = b['format_note']?.toString() ?? '';
+          int noteCompare = bNote
+              .compareTo(aNote); // Reverse order to put "High Quality" first
+          if (noteCompare != 0) return noteCompare;
+
+          // Finally by filesize (smaller first for same resolution)
           return (a['filesize'] ?? 0).compareTo(b['filesize'] ?? 0);
         });
 
@@ -110,6 +136,7 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _downloading = true;
       _progressText = 'Starting download...';
+      _progressPercent = null;
     });
 
     // Create a proper Socket.IO WebSocket URL
@@ -145,6 +172,9 @@ class _HomePageState extends State<HomePage> {
     });
 
     _channel!.stream.listen((message) {
+      // Debug: Print all received messages
+      print('Received WebSocket message: $message');
+
       // SocketIO sends messages in a specific format like: 42["event",{data}]
       // We need to parse this properly
       if (message.startsWith('42')) {
@@ -181,13 +211,18 @@ class _HomePageState extends State<HomePage> {
             eta = 'ETA: ${_formatDuration(data['eta'])}';
           }
 
-          final percent = data['percent'] != null
-              ? '${data['percent'].toStringAsFixed(1)}%'
-              : '';
+          double? percent;
+          if (data['percent'] != null) {
+            percent = data['percent'].toDouble();
+          }
+
           final status = data['status'] ?? '';
+          final percentText =
+              percent != null ? '${percent.toStringAsFixed(1)}%' : '';
 
           setState(() {
-            _progressText = 'Status: $status\n$percent $speed $eta';
+            _progressPercent = percent;
+            _progressText = '$status\n$percentText $speed $eta';
           });
         }
       }
@@ -220,6 +255,20 @@ class _HomePageState extends State<HomePage> {
       return h == '00' ? '$m:$s' : '$h:$m:$s';
     }
     return '';
+  }
+
+  String _simplifyCodec(String codec) {
+    if (codec == 'none' || codec == 'null' || codec == 'unknown') return 'None';
+
+    // Extract the main codec name without version numbers
+    if (codec.contains('avc')) return 'H.264';
+    if (codec.contains('av1')) return 'AV1';
+    if (codec.contains('vp9')) return 'VP9';
+    if (codec.contains('opus')) return 'Opus';
+    if (codec.contains('mp4a')) return 'AAC';
+    if (codec.contains('mp3')) return 'MP3';
+
+    return codec.split('.')[0]; // Return first part of codec string
   }
 
   // Helper method removed as we're using inline ScaffoldMessenger calls
@@ -273,7 +322,28 @@ class _HomePageState extends State<HomePage> {
               ),
             if (_formats.isNotEmpty) ...[
               const SizedBox(height: 16),
-              const Text('Select Format (video+audio):'),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Available Formats:',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      'Found ${_formats.length} formats. Select one to download:',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[700],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               Expanded(
                 child: ListView.builder(
                   itemCount: _formats.length,
@@ -281,23 +351,49 @@ class _HomePageState extends State<HomePage> {
                     final format = _formats[index];
                     final formatId = format['format_id'];
                     final ext = format['ext'];
-                    final res = format['resolution'] ?? 'unknown';
-                    final sizeMB = (format['filesize'] != null)
-                        ? (format['filesize'] / (1024 * 1024))
-                            .toStringAsFixed(1)
-                        : 'N/A';
+                    final resolution = format['resolution'] ?? 'unknown';
+                    final formatNote = format['format_note'] ?? '';
+                    final vcodec = format['vcodec'] ?? 'unknown';
+                    final acodec = format['acodec'] ?? 'unknown';
 
-                    return RadioListTile<String>(
-                      title: Text('[$formatId] $ext - $res - $sizeMB MB'),
-                      value: formatId,
-                      groupValue: _selectedFormatId,
-                      onChanged: _downloading
-                          ? null
-                          : (val) {
-                              setState(() {
-                                _selectedFormatId = val;
-                              });
-                            },
+                    // Format filesize properly
+                    String filesize = 'Unknown size';
+                    if (format['filesize'] != null) {
+                      final sizeMB = format['filesize'] / (1024 * 1024);
+                      if (sizeMB > 1024) {
+                        filesize = '${(sizeMB / 1024).toStringAsFixed(2)} GB';
+                      } else {
+                        filesize = '${sizeMB.toStringAsFixed(1)} MB';
+                      }
+                    }
+
+                    // Create a descriptive label for the format
+                    String formatDescription = '$resolution • $ext • $filesize';
+                    if (formatNote.isNotEmpty) {
+                      formatDescription = '$formatNote • $formatDescription';
+                    }
+
+                    // Show codec info for advanced users
+                    String codecInfo =
+                        'V: ${_simplifyCodec(vcodec)} • A: ${_simplifyCodec(acodec)}';
+
+                    return Card(
+                      margin: EdgeInsets.symmetric(vertical: 4),
+                      child: RadioListTile<String>(
+                        title: Text(formatDescription,
+                            style: TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: Text(codecInfo),
+                        value: formatId,
+                        groupValue: _selectedFormatId,
+                        onChanged: _downloading
+                            ? null
+                            : (val) {
+                                setState(() {
+                                  _selectedFormatId = val;
+                                });
+                              },
+                        dense: true,
+                      ),
                     );
                   },
                 ),
@@ -305,9 +401,20 @@ class _HomePageState extends State<HomePage> {
               if (_downloading)
                 Padding(
                   padding: const EdgeInsets.all(8.0),
-                  child: Text(
-                    _progressText,
-                    style: const TextStyle(fontSize: 16),
+                  child: Column(
+                    children: [
+                      LinearProgressIndicator(
+                        value: _progressPercent != null
+                            ? _progressPercent! / 100
+                            : null,
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        _progressText,
+                        style: const TextStyle(fontSize: 16),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
                   ),
                 ),
               ElevatedButton(
