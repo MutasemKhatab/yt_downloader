@@ -8,12 +8,12 @@ void main() {
   runApp(const MyApp());
 }
 
-const backendHttpUrl = 'http://192.168.0.129:5000';
-const backendWsUrl = 'ws://192.168.0.129:5000';
+const backendHttpUrl = 'http://127.0.0.1:5000';
+const backendWsUrl = 'ws://127.0.0.1:5000';
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
-  @override 
+  @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'YT Downloader',
