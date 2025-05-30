@@ -121,7 +121,55 @@ def handle_download(data):
         return
 
     def progress_hook(d):
-        socketio.emit('progress', d)
+        # Process and enhance the progress data for better display
+        status = d.get('status', '')
+        
+        print(f"Progress hook received: status={status}")
+        
+        # Process the data based on status type
+        if status == 'downloading':
+            # Regular download progress
+            progress_data = {
+                'status': 'downloading',
+                'downloaded_bytes': d.get('downloaded_bytes', 0),
+                'total_bytes': d.get('total_bytes') or d.get('total_bytes_estimate', 0),
+                'filename': d.get('filename', ''),
+                'speed': d.get('speed', 0),
+                'eta': d.get('eta', 0),
+                'elapsed': d.get('elapsed', 0)
+            }
+            
+            # Calculate percentage if possible
+            if progress_data['total_bytes'] > 0:
+                progress_data['percent'] = (progress_data['downloaded_bytes'] / progress_data['total_bytes']) * 100
+                print(f"Download progress: {progress_data['percent']:.1f}%, "
+                      f"{progress_data['downloaded_bytes']}/{progress_data['total_bytes']} bytes")
+            else:
+                progress_data['percent'] = 0
+                print(f"Download progress: unknown percentage, "
+                      f"{progress_data['downloaded_bytes']} bytes downloaded")
+                
+            socketio.emit('progress', progress_data)
+        
+        elif status == 'finished':
+            # Download finished, now processing
+            print("Download finished, starting FFmpeg processing")
+            socketio.emit('progress', {
+                'status': 'processing',
+                'filename': d.get('filename', ''),
+                'percent': 99.0,  # Not quite 100% as processing is still ongoing
+                'message': 'Download complete, now processing with FFmpeg...'
+            })
+        
+        elif status == 'error':
+            # Error occurred
+            print(f"Error during download: {d.get('error', 'Unknown error')}")
+            socketio.emit('error', {'message': d.get('error', 'Download error occurred')})
+        
+        else:
+            # For any other status, just send the data as is
+            print(f"Other status received: {status}")
+            socketio.emit('progress', d)
 
     ydl_opts = {
         'format': format_id,
@@ -140,8 +188,16 @@ def handle_download(data):
     try:
         with YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
+        print("Download and processing complete!")
+        # Send the final 100% complete message
+        socketio.emit('progress', {
+            'status': 'complete',
+            'percent': 100.0,
+            'message': 'Download and processing complete!'
+        })
         socketio.emit('done', {'status': 'complete'})
     except Exception as e:
+        print(f"Error during download: {str(e)}")
         socketio.emit('error', {'message': str(e)})
 
 if __name__ == '__main__':

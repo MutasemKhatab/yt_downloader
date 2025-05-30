@@ -172,8 +172,30 @@ class _HomePageState extends State<HomePage> {
     });
 
     _channel!.stream.listen((message) {
-      // Debug: Print all received messages
+      // Debug: Print received WebSocket message
       print('Received WebSocket message: $message');
+
+      // Only try to parse JSON for relevant progress messages
+      if (message.startsWith('42')) {
+        try {
+          final jsonStr = message.substring(2);
+          final parsed = jsonDecode(jsonStr);
+          final eventName = parsed[0];
+          final data = parsed[1];
+          // Print detailed progress data for debugging
+          if (eventName == 'progress') {
+            final status = data['status'] ?? 'unknown';
+            final percent = data['percent']?.toString() ?? 'null';
+            final downloaded =
+                data['downloaded_bytes']?.toString() ?? 'unknown';
+            final total = data['total_bytes']?.toString() ?? 'unknown';
+            print(
+                'Progress event: $status, Percent: $percent, Bytes: $downloaded/$total');
+          }
+        } catch (e) {
+          print('Error parsing WebSocket message: $e');
+        }
+      }
 
       // SocketIO sends messages in a specific format like: 42["event",{data}]
       // We need to parse this properly
@@ -200,29 +222,68 @@ class _HomePageState extends State<HomePage> {
           });
           _channel!.sink.close();
         } else if (eventName == 'progress') {
-          // Progress data - display percent and speed if available
-          String speed = '';
-          if (data['speed'] != null) {
-            speed = 'Speed: ${_formatSpeed(data['speed'])}';
-          }
-
-          String eta = '';
-          if (data['eta'] != null) {
-            eta = 'ETA: ${_formatDuration(data['eta'])}';
-          }
-
-          double? percent;
-          if (data['percent'] != null) {
-            percent = data['percent'].toDouble();
-          }
-
+          // Progress data handling with improved display
           final status = data['status'] ?? '';
-          final percentText =
-              percent != null ? '${percent.toStringAsFixed(1)}%' : '';
+          String statusMessage = '';
+          String details = '';
+          double? percent;
+
+          // Handle different status types with appropriate messages
+          if (status == 'downloading') {
+            // Regular download progress
+            if (data['percent'] != null) {
+              percent = data['percent'].toDouble();
+            } else if (data['downloaded_bytes'] != null &&
+                data['total_bytes'] != null &&
+                data['total_bytes'] > 0) {
+              percent = (data['downloaded_bytes'] / data['total_bytes']) * 100;
+            }
+
+            // Show a descriptive downloading message
+            statusMessage = data['filename'] != null
+                ? 'Downloading: ${data['filename'].split('/').last}'
+                : 'Downloading';
+
+            // Add speed if available
+            String speed = '';
+            if (data['speed'] != null) {
+              speed = 'Speed: ${_formatSpeed(data['speed'])}';
+            }
+
+            // Add ETA if available
+            String eta = '';
+            if (data['eta'] != null) {
+              eta = 'ETA: ${_formatDuration(data['eta'])}';
+            }
+
+            // Format for display
+            final percentText =
+                percent != null ? '${percent.toStringAsFixed(1)}%' : '';
+            details = '$percentText $speed $eta'.trim();
+          } else if (status == 'processing') {
+            statusMessage = 'Processing';
+            percent = 100.0; // Show full progress bar during processing
+            details = data['message'] ?? 'Processing with FFmpeg...';
+          } else {
+            // Fallback for other status types
+            statusMessage = status;
+            if (data['percent'] != null) {
+              final percentValue = data['percent'].toDouble();
+              percent = percentValue;
+              details = '${percentValue.toStringAsFixed(1)}%';
+            } else {
+              details = 'Processing...';
+            }
+          }
 
           setState(() {
             _progressPercent = percent;
-            _progressText = '$status\n$percentText $speed $eta';
+            // Format progress text for better readability
+            if (details.isNotEmpty) {
+              _progressText = '$statusMessage\n$details';
+            } else {
+              _progressText = statusMessage;
+            }
           });
         }
       }
