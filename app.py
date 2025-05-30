@@ -26,23 +26,24 @@ def get_video_info():
 
     formats = []
     for f in info.get('formats', []):
-        # Only include formats that have both audio and video
-        if (f.get('acodec') != 'none' and f.get('acodec') is not None and 
-            f.get('vcodec') != 'none' and f.get('vcodec') is not None):
-            
-            resolution = f.get('resolution') or f"{f.get('width', '?')}x{f.get('height', '?')}"
-            format_entry = {
-                'format_id': f['format_id'],
-                'ext': f['ext'],
-                'resolution': resolution,
-                'filesize': f.get('filesize'),
-                'format_note': f.get('format_note'),
-                'vcodec': f.get('vcodec'),
-                'acodec': f.get('acodec'),
-                'has_video': True,
-                'has_audio': True,
-            }
-            formats.append(format_entry)
+        resolution = f.get('resolution') or f"{f.get('width')}x{f.get('height')}"
+        # TODO these 2 lines return only one resolution, need to fix
+        if f.get('acodec') == 'none' or not f.get('acodec'):
+            continue  # Skip formats without audio codec
+        if f.get('vcodec') == 'none' or not f.get('vcodec'):
+            continue
+        format_entry = {
+            'format_id': f['format_id'],
+            'ext': f['ext'],
+            'resolution': resolution,
+            'filesize': f.get('filesize'),
+            'format_note': f.get('format_note'),
+            'vcodec': f.get('vcodec'),
+            'acodec': f.get('acodec'),
+            'has_video': f.get('vcodec') != 'none',
+            'has_audio': f.get('acodec') != 'none',
+        }
+        formats.append(format_entry)
 
     return jsonify({
         'title': info.get('title'),
@@ -66,11 +67,7 @@ def handle_download(data):
     ydl_opts = {
         'format': format_id,
         'progress_hooks': [progress_hook],
-        'outtmpl': '%(title)s.%(ext)s',
-        'postprocessors': [{
-            'key': 'FFmpegFixupM4a',
-        }],
-        'prefer_ffmpeg': True
+        'outtmpl': '%(title)s.%(ext)s'
     }
 
     try:
